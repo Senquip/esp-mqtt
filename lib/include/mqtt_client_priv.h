@@ -75,7 +75,6 @@ typedef struct {
     char *path;
     char *scheme;
     int port;
-    bool auto_reconnect;
     int network_timeout_ms;
     int refresh_connection_after_ms;
     int reconnect_timeout_ms;
@@ -127,7 +126,6 @@ struct esp_mqtt_client {
     uint16_t send_publish_packet_count; // This is for MQTT v5.0 flow control
 #endif
     int wait_timeout_ms;
-    int auto_reconnect;
     esp_mqtt_event_t event;
     bool run;
     bool wait_for_ping_resp;

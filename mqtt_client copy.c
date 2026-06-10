@@ -618,12 +618,6 @@ esp_err_t esp_mqtt_set_config(esp_mqtt_client_handle_t client, const esp_mqtt_cl
         client->config->refresh_connection_after_ms = config->network.refresh_connection_after_ms;
     }
 
-    if (config->network.reconnect_timeout_ms) {
-        client->config->reconnect_timeout_ms = config->network.reconnect_timeout_ms;
-    } else {
-        client->config->reconnect_timeout_ms = MQTT_RECON_DEFAULT_MS;
-    }
-
     client->config->transport = config->network.transport;
 
     if (config->network.if_name) {
@@ -955,7 +949,6 @@ static void esp_mqtt_abort_connection(esp_mqtt_client_handle_t client)
 {
     MQTT_API_LOCK(client);
     esp_transport_close(client->transport);
-    client->wait_timeout_ms = client->config->reconnect_timeout_ms;
     client->reconnect_tick = platform_tick_get_ms();
     client->state = MQTT_STATE_WAIT_RECONNECT;
     client->event.event_id = MQTT_EVENT_DISCONNECTED;
@@ -2001,6 +1994,7 @@ static void esp_mqtt_task(void *pv)
             }
 
             client->state = MQTT_STATE_CONNECTED;
+            client->wait_timeout_ms = 0; // BB: Reset wait timeout after successful connection, so that next reconnect will start with initial timeout.
             esp_mqtt_dispatch_event_with_msgid(client);
             client->refresh_connection_tick = platform_tick_get_ms();
             client->keepalive_tick = platform_tick_get_ms();
@@ -2112,7 +2106,7 @@ static void esp_mqtt_task(void *pv)
             if (xEventGroupGetBits(client->status_bits) & RECONNECT_BIT) {
                 xEventGroupClearBits(client->status_bits, RECONNECT_BIT);
                 client->state = MQTT_STATE_INIT;
-                client->wait_timeout_ms = client->config->reconnect_timeout_ms;
+                client->wait_timeout_ms = MQTT_RECON_DEFAULT_MS;
                 ESP_LOGD(TAG, "Reconnecting per user request...");
                 break;
             }
@@ -2275,10 +2269,7 @@ esp_err_t esp_mqtt_client_stop(esp_mqtt_client_handle_t client)
         client->run = false;
         client->state = MQTT_STATE_DISCONNECTED;
         MQTT_API_UNLOCK(client);
-
-        ESP_LOGI(TAG, "Client asked to stop, waiting for MQTT task to stop...");
         xEventGroupWaitBits(client->status_bits, STOPPED_BIT, false, true, portMAX_DELAY);
-        ESP_LOGI(TAG, "MQTT task stopped");
         return ESP_OK;
     } else {
         ESP_LOGW(TAG, "Client asked to stop, but was not started");

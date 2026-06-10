@@ -21,6 +21,7 @@ typedef struct outbox_item {
     int msg_id;
     int msg_type;
     int msg_qos;
+    double transmitted; // BB: uptime in seconds when the message was transmitted, it is not updated on retransmissions.
     outbox_tick_t tick;
     pending_state_t pending;
     STAILQ_ENTRY(outbox_item) next;
@@ -171,6 +172,32 @@ esp_err_t outbox_set_tick(outbox_handle_t outbox, int msg_id, outbox_tick_t tick
 
     if (item) {
         item->tick = tick;
+        return ESP_OK;
+    }
+
+    return ESP_FAIL;
+}
+
+esp_err_t outbox_set_transmitted_time(outbox_handle_t outbox, int msg_id, double tick)
+{
+    outbox_item_handle_t item = outbox_get(outbox, msg_id);
+
+    if (item) {
+        item->transmitted = tick;
+        return ESP_OK;
+    }
+
+    return ESP_FAIL;
+}
+
+esp_err_t outbox_get_transmitted_time(outbox_handle_t outbox, int msg_id, double *tick)
+{
+    outbox_item_handle_t item = outbox_get(outbox, msg_id);
+
+    if (item) {
+        if (tick) {
+            *tick = item->transmitted;
+        }
         return ESP_OK;
     }
 

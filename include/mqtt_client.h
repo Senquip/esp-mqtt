@@ -22,6 +22,9 @@
 #include "mqtt5_client.h"
 #endif
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -63,7 +66,9 @@ typedef enum esp_mqtt_event_id_t {
                               event
                                 */
     MQTT_EVENT_UNSUBSCRIBED, /*!< unsubscribed event, additional context:  msg_id */
-    MQTT_EVENT_PUBLISHED,    /*!< published event, additional context:  msg_id */
+    MQTT_EVENT_PUBACK,       /*!< PUBACK event, additional context: msg_id, transmitted */
+    MQTT_EVENT_PUBREC,       /*!< PUBREC event, additional context: msg_id, transmitted */
+    MQTT_EVENT_PUBCOMP,      /*!< PUBCOMP event, additional context: msg_id */
     MQTT_EVENT_DATA,         /*!< data event, additional context:
                                 - msg_id               message id
                                 - topic                pointer to the received topic
@@ -82,6 +87,7 @@ typedef enum esp_mqtt_event_id_t {
                               other contain data only with current data length         and
                               current data offset updating.
                                  */
+    MQTT_EVENT_PINGRESP,       /*!< ping response event */
     MQTT_EVENT_BEFORE_CONNECT, /*!< The event occurs before connecting */
     MQTT_EVENT_DELETED,        /*!< Notification on delete of one message from the
                                 internal outbox,        if the message couldn't have been sent
@@ -228,6 +234,7 @@ typedef struct esp_mqtt_event_t {
                         as internal *MQTT* errors */
     bool retain; /*!< Retained flag of the message associated with this event */
     int qos;     /*!< QoS of the messages associated with this event */
+    double transmitted; /*!< Transmission time of the message associated with this event, in seconds since boot */
     bool dup;    /*!< dup flag of the message associated with this event */
     esp_mqtt_protocol_ver_t
     protocol_ver;   /*!< MQTT protocol version used for connection, defaults to value from menuconfig*/
@@ -365,8 +372,6 @@ typedef struct esp_mqtt_client_config_t {
         int timeout_ms; /*!< Abort network operation if it is not completed after this value, in milliseconds
                 (default: 10000 ms). */
         int refresh_connection_after_ms; /*!< Refresh connection after this value (in milliseconds) */
-        bool disable_auto_reconnect;     /*!< Client will reconnect to server (when errors/disconnect). Set
-                                 `disable_auto_reconnect=true` to disable */
         esp_transport_keep_alive_t tcp_keep_alive_cfg;  /*!< Transport keep-alive config*/
         esp_transport_handle_t
         transport; /*!< Custom transport handle to use, leave it NULL to allow MQTT client create or recreate its own. Warning: The transport should be valid during the client lifetime and is destroyed when esp_mqtt_client_destroy is called. */
@@ -414,7 +419,7 @@ typedef struct topic_t {
  * @return mqtt_client_handle if successfully created, NULL on error
  */
 esp_mqtt_client_handle_t
-esp_mqtt_client_init(const esp_mqtt_client_config_t *config);
+esp_mqtt_client_init(const esp_mqtt_client_config_t *config, SemaphoreHandle_t lock);
 
 /**
  * @brief Sets *MQTT* connection URI. This API is usually used to overrides the
@@ -677,13 +682,22 @@ esp_err_t esp_mqtt_client_unregister_event(esp_mqtt_client_handle_t client, esp_
                                            esp_event_handler_t event_handler);
 
 /**
- * @brief Get outbox size
+ * @brief Get outbox size (number of unsent bytes still in the outbox)
  *
  * @param client            *MQTT* client handle
  * @return outbox size
  *         0 on wrong initialization
  */
 int esp_mqtt_client_get_outbox_size(esp_mqtt_client_handle_t client);
+
+/**
+ * @brief Check if a message with a given message id is still in the outbox
+ * 
+ * @param client            *MQTT* client handle
+ * @param msg_id            message id to check
+ * @return true if the message is still in the outbox, false otherwise or on wrong initialization
+ */
+bool esp_mqtt_client_is_msg_queued(esp_mqtt_client_handle_t client, int msg_id);
 
 /**
  * @brief Dispatch user event to the mqtt internal event loop
