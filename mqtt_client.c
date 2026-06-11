@@ -512,9 +512,10 @@ esp_err_t esp_mqtt_set_config(esp_mqtt_client_handle_t client, const esp_mqtt_cl
         client->config->task_stack = MQTT_TASK_STACK;
     }
 
-    // The port comes from the URI, so init to 0 so it's updated when the URI is parsed. 
-    client->config->port = 0;
-
+    if (config->broker.address.port) {
+        client->config->port = config->broker.address.port;
+    }
+    
     if (config->network.tcp_keep_alive_cfg.keep_alive_enable) {
         client->config->tcp_keep_alive_cfg = config->network.tcp_keep_alive_cfg;
     }
