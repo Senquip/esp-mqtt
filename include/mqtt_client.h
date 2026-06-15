@@ -245,6 +245,8 @@ typedef struct esp_mqtt_event_t {
 
 } esp_mqtt_event_t;
 
+typedef void (*esp_mqtt_cb_t)(esp_mqtt_client_handle_t client, void *arg, void *arg2);
+
 typedef esp_mqtt_event_t *esp_mqtt_event_handle_t;
 
 /**
@@ -367,8 +369,6 @@ typedef struct esp_mqtt_client_config_t {
      * Network related configuration
      */
     struct network_t {
-        int reconnect_timeout_ms; /*!< Reconnect to the broker after this value in milliseconds if auto reconnect is not
-                          disabled (default: 10000 ms) */
         int timeout_ms; /*!< Abort network operation if it is not completed after this value, in milliseconds
                 (default: 10000 ms). */
         int refresh_connection_after_ms; /*!< Refresh connection after this value (in milliseconds) */
@@ -419,7 +419,7 @@ typedef struct topic_t {
  * @return mqtt_client_handle if successfully created, NULL on error
  */
 esp_mqtt_client_handle_t
-esp_mqtt_client_init(const esp_mqtt_client_config_t *config, SemaphoreHandle_t lock);
+esp_mqtt_client_init(const esp_mqtt_client_config_t *config);
 
 /**
  * @brief Sets *MQTT* connection URI. This API is usually used to overrides the
@@ -432,6 +432,20 @@ esp_mqtt_client_init(const esp_mqtt_client_config_t *config, SemaphoreHandle_t l
  */
 esp_err_t esp_mqtt_client_set_uri(esp_mqtt_client_handle_t client,
                                   const char *uri);
+
+/**
+ * @brief Updates *MQTT* client credentials. This API is usually used to update the
+ * credentials before a connection is established. 
+ * 
+ * @param client    *MQTT* client handle
+ * @param username  New username to set, if NULL, the username is not updated
+ * @param password  New password to set, if NULL, the password is not updated
+ * 
+ * @return ESP_OK on success, ESP_ERR_INVALID_ARG on wrong initialization, ESP_ERR_NO_MEM if
+ *         failed to update credentials due to memory allocation failure
+ */
+esp_err_t esp_mqtt_client_update_credentials(esp_mqtt_client_handle_t client, const char *username,
+                                              const char *password);
 
 /**
  * @brief Starts *MQTT* client with already created client handle
@@ -708,6 +722,16 @@ bool esp_mqtt_client_is_msg_queued(esp_mqtt_client_handle_t client, int msg_id);
  *         ESP_ERR_TIMEOUT if the event couldn't be queued (ref also CONFIG_MQTT_EVENT_QUEUE_SIZE)
  */
 esp_err_t esp_mqtt_dispatch_custom_event(esp_mqtt_client_handle_t client, esp_mqtt_event_t *event);
+
+/**
+ * @brief Invoke a callback onto the mqtt task context
+ * 
+ * @param client            *MQTT* client handle
+ * @param cb                callback to invoke in the mqtt task context
+ * @param arg1              First argument to pass to the callback
+ * @param arg2              second argument to pass to the callback
+ */
+esp_err_t esp_mqtt_client_invoke_cb(esp_mqtt_client_handle_t client, esp_mqtt_cb_t cb, void *arg1, void *arg2);
 
 /**
  * @brief Get a transport from the scheme

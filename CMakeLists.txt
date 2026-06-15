@@ -9,7 +9,7 @@ idf_component_register(SRCS "${srcs}"
                     INCLUDE_DIRS ${CMAKE_CURRENT_LIST_DIR}/include
                     PRIV_INCLUDE_DIRS ${CMAKE_CURRENT_LIST_DIR}/lib/include
                     REQUIRES esp_event tcp_transport
-                    PRIV_REQUIRES esp_timer http_parser esp_hw_support heap mongoose-os
+                    PRIV_REQUIRES esp_timer http_parser esp_hw_support heap
                     KCONFIG ${CMAKE_CURRENT_LIST_DIR}/Kconfig
                     )
 

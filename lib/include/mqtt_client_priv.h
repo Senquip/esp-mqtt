@@ -55,6 +55,12 @@ extern "C" {
 # define MQTT_API_UNLOCK(c)        xSemaphoreGiveRecursive(c->api_lock)
 #endif /* MQTT_USE_API_LOCKS */
 
+typedef struct esp_mqtt_cb_event_t {
+    void *arg1;
+    void *arg2; 
+    esp_mqtt_cb_t cb;
+} esp_mqtt_cb_event_t;
+
 typedef struct mqtt_state {
     uint8_t *in_buffer;
     int in_buffer_length;
@@ -125,8 +131,8 @@ struct esp_mqtt_client {
     mqtt5_config_storage_t *mqtt5_config;
     uint16_t send_publish_packet_count; // This is for MQTT v5.0 flow control
 #endif
-    int wait_timeout_ms;
     esp_mqtt_event_t event;
+    QueueHandle_t cb_queue; 
     bool run;
     bool wait_for_ping_resp;
     outbox_handle_t outbox;

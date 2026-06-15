@@ -9,15 +9,13 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "esp_transport.h"
 #include "mqtt_client.h"
 #include "mqtt_client_priv.h"
 #include "mqtt_msg.h"
 #include "mqtt_outbox.h"
 #include "mqtt_utils.h"
-
-#include "mgos_time.h"
-#include "mgos_utils.h"
 
 _Static_assert(sizeof(uint64_t) == sizeof(outbox_tick_t), "mqtt-client tick type size different from outbox tick type");
 #ifdef ESP_EVENT_ANY_ID
@@ -37,6 +35,7 @@ ESP_EVENT_DEFINE_BASE(MQTT_EVENTS);
 const static int STOPPED_BIT = (1 << 0);
 const static int RECONNECT_BIT = (1 << 1);
 const static int DISCONNECT_BIT = (1 << 2);
+const static int POLL_BIT = (1 << 3);
 
 static esp_err_t esp_mqtt_dispatch_event(esp_mqtt_client_handle_t client);
 static esp_err_t esp_mqtt_dispatch_event_with_msgid(esp_mqtt_client_handle_t client);
@@ -515,7 +514,6 @@ esp_err_t esp_mqtt_set_config(esp_mqtt_client_handle_t client, const esp_mqtt_cl
     if (config->broker.address.port) {
         client->config->port = config->broker.address.port;
     }
-    
     if (config->network.tcp_keep_alive_cfg.keep_alive_enable) {
         client->config->tcp_keep_alive_cfg = config->network.tcp_keep_alive_cfg;
     }
@@ -619,12 +617,6 @@ esp_err_t esp_mqtt_set_config(esp_mqtt_client_handle_t client, const esp_mqtt_cl
         client->config->refresh_connection_after_ms = config->network.refresh_connection_after_ms;
     }
 
-    if (config->network.reconnect_timeout_ms) {
-        client->config->reconnect_timeout_ms = config->network.reconnect_timeout_ms;
-    } else {
-        client->config->reconnect_timeout_ms = MQTT_RECON_DEFAULT_MS;
-    }
-
     client->config->transport = config->network.transport;
 
     if (config->network.if_name) {
@@ -717,7 +709,8 @@ esp_err_t esp_mqtt_set_config(esp_mqtt_client_handle_t client, const esp_mqtt_cl
 
     // Set uri at the end of config to override separately configured uri elements
     if (config->broker.address.uri) {
-        if ((err = esp_mqtt_client_set_uri(client, client->config->uri)) != ESP_OK) {
+        if (esp_mqtt_client_set_uri(client, client->config->uri) != ESP_OK) {
+            err = ESP_FAIL;
             goto _mqtt_set_config_failed;
         }
     }
@@ -765,6 +758,7 @@ void esp_mqtt_destroy_config(esp_mqtt_client_handle_t client)
 
     if (client->config->event_loop_handle) {
         esp_event_loop_delete(client->config->event_loop_handle);
+        client->config->event_loop_handle = NULL;
     }
 
 #endif
@@ -956,7 +950,6 @@ static void esp_mqtt_abort_connection(esp_mqtt_client_handle_t client)
 {
     MQTT_API_LOCK(client);
     esp_transport_close(client->transport);
-    client->wait_timeout_ms = client->config->reconnect_timeout_ms;
     client->reconnect_tick = platform_tick_get_ms();
     client->state = MQTT_STATE_WAIT_RECONNECT;
     client->event.event_id = MQTT_EVENT_DISCONNECTED;
@@ -965,20 +958,22 @@ static void esp_mqtt_abort_connection(esp_mqtt_client_handle_t client)
     MQTT_API_UNLOCK(client);
 }
 
-static bool create_client_data(esp_mqtt_client_handle_t client, SemaphoreHandle_t lock)
+static bool create_client_data(esp_mqtt_client_handle_t client)
 {
     client->event.error_handle = calloc(1, sizeof(esp_mqtt_error_codes_t));
     ESP_MEM_CHECK(TAG, client->event.error_handle, return false)
-    client->api_lock = lock;
+    client->api_lock = xSemaphoreCreateRecursiveMutex();
     ESP_MEM_CHECK(TAG, client->api_lock, return false);
     client->outbox = outbox_init();
     ESP_MEM_CHECK(TAG, client->outbox, return false);
     client->status_bits = xEventGroupCreate();
-    ESP_MEM_CHECK(TAG, client->status_bits, return false);
+    ESP_MEM_CHECK(TAG, client->status_bits, return false); 
+    client->cb_queue = xQueueCreate(5, sizeof(esp_mqtt_cb_event_t));
+    ESP_MEM_CHECK(TAG, client->cb_queue, return false);
     return true;
 }
 
-esp_mqtt_client_handle_t esp_mqtt_client_init(const esp_mqtt_client_config_t *config, SemaphoreHandle_t lock)
+esp_mqtt_client_handle_t esp_mqtt_client_init(const esp_mqtt_client_config_t *config)
 {
     esp_mqtt_client_handle_t client = heap_caps_calloc(1, sizeof(struct esp_mqtt_client),
 #if MQTT_EVENT_QUEUE_SIZE > 1
@@ -990,7 +985,7 @@ esp_mqtt_client_handle_t esp_mqtt_client_init(const esp_mqtt_client_config_t *co
 #endif
     ESP_MEM_CHECK(TAG, client, return NULL);
 
-    if (!create_client_data(client, lock)) {
+    if (!create_client_data(client)) {
         goto _mqtt_init_failed;
     }
 
@@ -1048,6 +1043,14 @@ esp_err_t esp_mqtt_client_destroy(esp_mqtt_client_handle_t client)
 
     if (client->status_bits) {
         vEventGroupDelete(client->status_bits);
+    }
+
+    if (client->api_lock) {
+        vSemaphoreDelete(client->api_lock);
+    }
+
+    if (client->cb_queue) {
+        vQueueDelete(client->cb_queue);
     }
 
     free(client->event.error_handle);
@@ -1188,6 +1191,39 @@ cleanup:
     free(new_password);
     free(user_info);
     return ret;
+}
+
+esp_err_t esp_mqtt_client_update_credentials(esp_mqtt_client_handle_t client, const char *username,
+                                              const char *password){
+    if (!client) {
+        ESP_LOGE(TAG, "Client was not initialized");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    MQTT_API_LOCK(client);
+
+    if (username) {
+        free(client->mqtt_state.connection.information.username);
+        client->mqtt_state.connection.information.username = strdup(username);
+        if (!client->mqtt_state.connection.information.username) {
+            ESP_LOGE(TAG, "Failed to allocate memory for username");
+            MQTT_API_UNLOCK(client);
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    if (password) {
+        free(client->mqtt_state.connection.information.password);
+        client->mqtt_state.connection.information.password = strdup(password);
+        if (!client->mqtt_state.connection.information.password) {
+            ESP_LOGE(TAG, "Failed to allocate memory for password");
+            MQTT_API_UNLOCK(client);
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    MQTT_API_UNLOCK(client);
+    return ESP_OK;
 }
 
 static esp_err_t esp_mqtt_dispatch_event_with_msgid(esp_mqtt_client_handle_t client)
@@ -1920,18 +1956,38 @@ static inline void run_event_loop(esp_mqtt_client_handle_t client)
     }
 }
 
+esp_err_t esp_mqtt_client_invoke_cb(esp_mqtt_client_handle_t client, esp_mqtt_cb_t cb, void *arg1, void *arg2)
+{
+    if(client == NULL || client->state == MQTT_STATE_DISCONNECTED) {
+        return ESP_FAIL;
+    }
+    esp_mqtt_cb_event_t item = { .cb = cb, .arg1 = arg1, .arg2 = arg2 };
+    esp_err_t ret = xQueueSend(client->cb_queue, &item, 10) == pdTRUE ? ESP_OK : ESP_FAIL;
+    xEventGroupSetBits(client->status_bits, POLL_BIT);
+    return ret;
+}
+
+static void run_queue_callbacks(esp_mqtt_client_handle_t client)
+{
+    esp_mqtt_cb_event_t item; 
+    while (xQueueReceive(client->cb_queue, &item, 0) == pdTRUE) {
+        if (item.cb) item.cb(client, item.arg1, item.arg2); 
+    }
+}
+
 static void esp_mqtt_task(void *pv)
 {
     esp_mqtt_client_handle_t client = (esp_mqtt_client_handle_t) pv;
     uint64_t last_retransmit = 0;
-    outbox_tick_t msg_tick = 0;
+    outbox_tick_t msg_tick = 0;    
     client->run = true;
-    client->state = MQTT_STATE_INIT;
     xEventGroupClearBits(client->status_bits, STOPPED_BIT);
 
     while (client->run) {
         MQTT_API_LOCK(client);
         run_event_loop(client);
+        run_queue_callbacks(client);
+        
         // delete long pending messages
         mqtt_delete_expired_messages(client);
         mqtt_client_state_t state = client->state;
@@ -1941,7 +1997,7 @@ static void esp_mqtt_task(void *pv)
             break;
 
         case MQTT_STATE_INIT:
-            xEventGroupClearBits(client->status_bits, RECONNECT_BIT | DISCONNECT_BIT);
+            xEventGroupClearBits(client->status_bits, RECONNECT_BIT | DISCONNECT_BIT | POLL_BIT);
             client->transport = client->config->transport;
 
             if (!client->transport) {
@@ -2043,7 +2099,7 @@ static void esp_mqtt_task(void *pv)
                             mqtt_get_type(client->mqtt_state.connection.outbound_message.data) == MQTT_MSG_TYPE_PUBLISH) {
                         outbox_set_pending(client->outbox, client->mqtt_state.pending_msg_id, TRANSMITTED);
                         // BB: Update it just once on first transmission. Subsequent retransmissions will not update the tick.
-                        esp_err_t sq_err = outbox_set_transmitted_time(client->outbox, client->mqtt_state.pending_msg_id, mgos_uptime());
+                        esp_err_t sq_err = outbox_set_transmitted_time(client->outbox, client->mqtt_state.pending_msg_id, (double) esp_timer_get_time()/ 1000000.0);
                         if (sq_err != ESP_OK) {
                             ESP_LOGE(TAG, "SQ: Failed to set transmitted time for message id=%d", client->mqtt_state.pending_msg_id);
                         }
@@ -2113,14 +2169,14 @@ static void esp_mqtt_task(void *pv)
             if (xEventGroupGetBits(client->status_bits) & RECONNECT_BIT) {
                 xEventGroupClearBits(client->status_bits, RECONNECT_BIT);
                 client->state = MQTT_STATE_INIT;
-                client->wait_timeout_ms = client->config->reconnect_timeout_ms;
                 ESP_LOGD(TAG, "Reconnecting per user request...");
                 break;
             }
 
             MQTT_API_UNLOCK(client);
-            xEventGroupWaitBits(client->status_bits, RECONNECT_BIT, false, true,
-                                max_poll_timeout(client, client->wait_timeout_ms / 2 / portTICK_PERIOD_MS));
+            xEventGroupWaitBits(client->status_bits, RECONNECT_BIT | POLL_BIT, false, true,
+                                max_poll_timeout(client, MQTT_RECON_DEFAULT_MS / portTICK_PERIOD_MS));
+            xEventGroupClearBits(client->status_bits, POLL_BIT);
             // continue the while loop instead of break, as the mutex is unlocked
             continue;
 
@@ -2138,7 +2194,8 @@ static void esp_mqtt_task(void *pv)
             }
         }
     }
-
+    // Drain any remaining events 
+    run_queue_callbacks(client);
     esp_transport_close(client->transport);
     outbox_delete_all_items(client->outbox);
     client->state = MQTT_STATE_DISCONNECTED;
@@ -2172,11 +2229,12 @@ esp_err_t esp_mqtt_client_start(esp_mqtt_client_handle_t client)
     }
 
 #else
-    ESP_LOGD(TAG, "Core selection disabled");
 
+    client->state = MQTT_STATE_WAIT_RECONNECT;
     if (xTaskCreate(esp_mqtt_task, "mqtt_task", client->config->task_stack, client, client->config->task_prio,
                     &client->task_handle) != pdTRUE) {
         ESP_LOGE(TAG, "Error create mqtt task");
+        client->state = MQTT_STATE_DISCONNECTED;
         err = ESP_FAIL;
     }
 
@@ -2211,7 +2269,6 @@ esp_err_t esp_mqtt_client_reconnect(esp_mqtt_client_handle_t client)
         return ESP_FAIL;
     }
 
-    client->wait_timeout_ms = 0;
     xEventGroupSetBits(client->status_bits, RECONNECT_BIT);
     return ESP_OK;
 }
@@ -2268,18 +2325,11 @@ esp_err_t esp_mqtt_client_stop(esp_mqtt_client_handle_t client)
         // Only send the disconnect message if the client is connected
         if (client->state == MQTT_STATE_CONNECTED) {
             send_disconnect_msg(client);
-            // Fire the disconnect event before tearing down
-            client->event.event_id = MQTT_EVENT_DISCONNECTED;
-            esp_mqtt_dispatch_event(client);
         }
-
         client->run = false;
         client->state = MQTT_STATE_DISCONNECTED;
         MQTT_API_UNLOCK(client);
-
-        ESP_LOGI(TAG, "Client asked to stop, waiting for MQTT task to stop...");
         xEventGroupWaitBits(client->status_bits, STOPPED_BIT, false, true, portMAX_DELAY);
-        ESP_LOGI(TAG, "MQTT task stopped");
         return ESP_OK;
     } else {
         ESP_LOGW(TAG, "Client asked to stop, but was not started");
