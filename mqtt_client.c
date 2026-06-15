@@ -514,6 +514,7 @@ esp_err_t esp_mqtt_set_config(esp_mqtt_client_handle_t client, const esp_mqtt_cl
     if (config->broker.address.port) {
         client->config->port = config->broker.address.port;
     }
+
     if (config->network.tcp_keep_alive_cfg.keep_alive_enable) {
         client->config->tcp_keep_alive_cfg = config->network.tcp_keep_alive_cfg;
     }
@@ -2326,6 +2327,7 @@ esp_err_t esp_mqtt_client_stop(esp_mqtt_client_handle_t client)
         if (client->state == MQTT_STATE_CONNECTED) {
             send_disconnect_msg(client);
         }
+
         client->run = false;
         client->state = MQTT_STATE_DISCONNECTED;
         MQTT_API_UNLOCK(client);
@@ -2803,6 +2805,7 @@ int esp_mqtt_client_get_outbox_size(esp_mqtt_client_handle_t client)
     int outbox_size = 0;
 
     if (client == NULL) {
+        ESP_LOGE(TAG, "Unable to get outbox size - client handle is NULL");
         return 0;
     }
 
