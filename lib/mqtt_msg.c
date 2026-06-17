@@ -8,6 +8,7 @@
 #include "mqtt_msg.h"
 #include "mqtt_config.h"
 #include "platform.h"
+#include "esp_log.h"
 
 #define MQTT_MAX_FIXED_HEADER_SIZE 5
 #define MQTT_3_1_VARIABLE_HEADER_SIZE 12
@@ -38,12 +39,12 @@ static uint16_t append_message_id(mqtt_connection_t *connection, uint16_t messag
 {
     // If message_id is zero then we should assign one, otherwise
     // we'll use the one supplied by the caller
-    while (message_id == 0) {
-#if MQTT_MSG_ID_INCREMENTAL
-        message_id = ++connection->last_message_id;
-#else
-        message_id = platform_random(65535);
-#endif
+    if (message_id == 0) {
+        if(connection->msg_id_fn == NULL) {
+            ESP_LOGE("mqtt_msg", ("Message ID function not set"));
+            return 0;
+        }
+        message_id = connection->msg_id_fn(connection->msg_id_fn_ctx);
     }
 
     if (connection->outbound_message.length + 2 > connection->buffer_length) {
@@ -450,7 +451,7 @@ mqtt_message_t *mqtt_msg_publish(mqtt_connection_t *connection, const char *topi
     }
 
     if (qos > 0) {
-        if ((*message_id = append_message_id(connection, 0)) == 0) {
+        if ((*message_id = append_message_id(connection, *message_id)) == 0) {
             return fail_message(connection);
         }
     } else {

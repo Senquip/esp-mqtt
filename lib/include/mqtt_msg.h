@@ -59,9 +59,8 @@ typedef struct mqtt_connect_info {
 
 typedef struct mqtt_connection {
     mqtt_message_t outbound_message;
-#if MQTT_MSG_ID_INCREMENTAL
-    uint16_t last_message_id;   /*!< last used id if incremental message id configured */
-#endif
+    esp_mqtt_msg_id_fn_t msg_id_fn;
+    void *msg_id_fn_ctx;
     uint8_t *buffer;
     size_t buffer_length;
     mqtt_connect_info_t information;

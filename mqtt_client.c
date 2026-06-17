@@ -1227,6 +1227,21 @@ esp_err_t esp_mqtt_client_update_credentials(esp_mqtt_client_handle_t client, co
     return ESP_OK;
 }
 
+esp_err_t esp_mqtt_client_set_msg_id_fn(esp_mqtt_client_handle_t client,
+                                         esp_mqtt_msg_id_fn_t fn, void *ctx){
+    if (!client) {
+        ESP_LOGE(TAG, "Client was not initialized");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    MQTT_API_LOCK(client);
+    client->mqtt_state.connection.msg_id_fn = fn;
+    client->mqtt_state.connection.msg_id_fn_ctx = ctx;
+    MQTT_API_UNLOCK(client);
+
+    return ESP_OK;
+}
+
 static esp_err_t esp_mqtt_dispatch_event_with_msgid(esp_mqtt_client_handle_t client)
 {
     if (client->mqtt_state.connection.information.protocol_ver == MQTT_PROTOCOL_V_5) {
@@ -1934,9 +1949,9 @@ static inline int max_poll_timeout(esp_mqtt_client_handle_t client, int max_time
 {
     return
 #if MQTT_EVENT_QUEUE_SIZE > 1
-        atomic_load(&client->queued_events) > 0 ? 10 : max_timeout;
+        (atomic_load(&client->queued_events) > 0 || uxQueueMessagesWaiting(client->cb_queue) > 0) ? 10 : max_timeout;
 #else
-        max_timeout;
+        uxQueueMessagesWaiting(client->cb_queue) > 0 ? 10 : max_timeout;
 #endif
 }
 
@@ -2175,7 +2190,7 @@ static void esp_mqtt_task(void *pv)
             }
 
             MQTT_API_UNLOCK(client);
-            xEventGroupWaitBits(client->status_bits, RECONNECT_BIT | POLL_BIT, false, true,
+            xEventGroupWaitBits(client->status_bits, RECONNECT_BIT | POLL_BIT, false, false,
                                 max_poll_timeout(client, MQTT_RECON_DEFAULT_MS / portTICK_PERIOD_MS));
             xEventGroupClearBits(client->status_bits, POLL_BIT);
             // continue the while loop instead of break, as the mutex is unlocked
@@ -2503,9 +2518,9 @@ int esp_mqtt_client_unsubscribe(esp_mqtt_client_handle_t client, const char *top
 }
 
 static int make_publish(esp_mqtt_client_handle_t client, const char *topic, const char *data,
-                        int len, int qos, int retain)
+                        int len, int qos, int retain, int msg_id)
 {
-    uint16_t pending_msg_id = 0;
+    uint16_t pending_msg_id = msg_id;
 
     if (client->mqtt_state.connection.information.protocol_ver == MQTT_PROTOCOL_V_5) {
 #ifdef MQTT_PROTOCOL_5
@@ -2535,9 +2550,9 @@ static int make_publish(esp_mqtt_client_handle_t client, const char *topic, cons
     return pending_msg_id;
 }
 static inline int mqtt_client_enqueue_publish(esp_mqtt_client_handle_t client, const char *topic, const char *data,
-                                              int len, int qos, int retain, bool store)
+                                              int len, int qos, int retain, bool store, int msg_id)
 {
-    int pending_msg_id = make_publish(client, topic, data, len, qos, retain);
+    int pending_msg_id = make_publish(client, topic, data, len, qos, retain, msg_id);
 
     if (pending_msg_id < 0) {
         return -1;
@@ -2571,7 +2586,7 @@ static inline int mqtt_client_enqueue_publish(esp_mqtt_client_handle_t client, c
 }
 
 int esp_mqtt_client_publish(esp_mqtt_client_handle_t client, const char *topic, const char *data, int len, int qos,
-                            int retain)
+                            int retain, int msg_id)
 {
     if (!client) {
         ESP_LOGE(TAG, "Client was not initialized");
@@ -2615,7 +2630,7 @@ int esp_mqtt_client_publish(esp_mqtt_client_handle_t client, const char *topic, 
         }
     }
 
-    int pending_msg_id = mqtt_client_enqueue_publish(client, topic, data, len, qos, retain, false);
+    int pending_msg_id = mqtt_client_enqueue_publish(client, topic, data, len, qos, retain, false, msg_id);
 
     if (pending_msg_id < 0) {
         MQTT_API_UNLOCK(client);
@@ -2698,7 +2713,7 @@ cannot_publish:
 }
 
 int esp_mqtt_client_enqueue(esp_mqtt_client_handle_t client, const char *topic, const char *data, int len, int qos,
-                            int retain, bool store)
+                            int retain, bool store, int msg_id)
 {
     if (!client) {
         ESP_LOGE(TAG, "Client was not initialized");
@@ -2732,7 +2747,7 @@ int esp_mqtt_client_enqueue(esp_mqtt_client_handle_t client, const char *topic, 
     }
 
 #endif
-    int ret = mqtt_client_enqueue_publish(client, topic, data, len, qos, retain, store);
+    int ret = mqtt_client_enqueue_publish(client, topic, data, len, qos, retain, store, msg_id);
     MQTT_API_UNLOCK(client);
 
     if (ret == 0 && store == false) {
@@ -2817,24 +2832,6 @@ int esp_mqtt_client_get_outbox_size(esp_mqtt_client_handle_t client)
 
     MQTT_API_UNLOCK(client);
     return outbox_size;
-}
-
-bool esp_mqtt_client_is_msg_queued(esp_mqtt_client_handle_t client, int msg_id) {
-    bool is_queued = false;
-
-    if (client == NULL) {
-        return false;
-    }
-
-    MQTT_API_LOCK(client);
-
-    if (client->outbox) {
-        outbox_item_handle_t item = outbox_get(client->outbox, msg_id);
-        if (item != NULL) is_queued = outbox_item_get_pending(item) == QUEUED;
-    }
-
-    MQTT_API_UNLOCK(client);
-    return is_queued;
 }
 
 
