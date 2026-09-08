@@ -2210,10 +2210,26 @@ static void esp_mqtt_task(void *pv)
             }
         }
     }
-    // Drain any remaining events 
+    // Drain any remaining events
     run_queue_callbacks(client);
     esp_transport_close(client->transport);
+
+#if MQTT_REPORT_DELETED_MESSAGES
+    // Report and delete any messages still in the outbox before it's gone
+    int msg_id;
+    while ((msg_id = outbox_delete_single(client->outbox)) >= 0) {
+        client->event.event_id = MQTT_EVENT_DELETED;
+        client->event.msg_id = msg_id;
+        esp_mqtt_dispatch_event(client);
+    }
+#else
     outbox_delete_all_items(client->outbox);
+#endif
+
+    // Tell any listeners that the client has stopped
+    client->event.event_id = MQTT_EVENT_STOPPED;
+    esp_mqtt_dispatch_event(client);
+
     client->state = MQTT_STATE_DISCONNECTED;
     xEventGroupSetBits(client->status_bits, STOPPED_BIT);
     vTaskDelete(NULL);
@@ -2353,6 +2369,18 @@ esp_err_t esp_mqtt_client_stop(esp_mqtt_client_handle_t client)
         MQTT_API_UNLOCK(client);
         return ESP_FAIL;
     }
+}
+
+esp_err_t esp_mqtt_client_initiate_stop(esp_mqtt_client_handle_t client)
+{
+    if (!client) {
+        ESP_LOGE(TAG, "Client was not initialized");
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    atomic_store(&client->run, false);
+    xEventGroupSetBits(client->status_bits, DISCONNECT_BIT | POLL_BIT);
+    return ESP_OK;
 }
 
 static esp_err_t esp_mqtt_client_ping(esp_mqtt_client_handle_t client)

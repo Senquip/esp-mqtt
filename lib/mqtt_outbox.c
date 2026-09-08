@@ -222,6 +222,21 @@ int outbox_delete_single_expired(outbox_handle_t outbox, outbox_tick_t current_t
     return msg_id;
 }
 
+int outbox_delete_single(outbox_handle_t outbox)
+{
+    outbox_item_handle_t item = STAILQ_FIRST(outbox->list);
+    if (!item) {
+        return -1;
+    }
+    STAILQ_REMOVE(outbox->list, item, outbox_item, next);
+    free(item->buffer);
+    outbox->size -= item->len;
+    int msg_id = item->msg_id;
+    free(item);
+    ESP_LOGD(TAG, "DELETE_SINGLE msgid=%d, remain size=%"PRIu64, msg_id, outbox_get_size(outbox));
+    return msg_id;
+}
+
 int outbox_delete_expired(outbox_handle_t outbox, outbox_tick_t current_tick, outbox_tick_t timeout)
 {
     int deleted_items = 0;

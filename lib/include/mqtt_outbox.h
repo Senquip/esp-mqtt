@@ -56,6 +56,14 @@ int outbox_delete_expired(outbox_handle_t outbox, outbox_tick_t current_tick, ou
  */
 int outbox_delete_single_expired(outbox_handle_t outbox, outbox_tick_t current_tick, outbox_tick_t timeout);
 
+/**
+ * @brief Unconditionally deletes the front message of the outbox, regardless
+ *        of its pending_state or age, returning its message id.
+ *
+ * @return msg id of the deleted message, -1 if the outbox is empty
+ */
+int outbox_delete_single(outbox_handle_t outbox);
+
 esp_err_t outbox_set_pending(outbox_handle_t outbox, int msg_id, pending_state_t pending);
 pending_state_t outbox_item_get_pending(outbox_item_handle_t item);
 esp_err_t outbox_set_tick(outbox_handle_t outbox, int msg_id, outbox_tick_t tick);

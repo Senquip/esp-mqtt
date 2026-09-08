@@ -133,7 +133,7 @@ struct esp_mqtt_client {
 #endif
     esp_mqtt_event_t event;
     QueueHandle_t cb_queue; 
-    bool run;
+    _Atomic bool run;
     bool wait_for_ping_resp;
     outbox_handle_t outbox;
     EventGroupHandle_t status_bits;

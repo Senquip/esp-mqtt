@@ -99,6 +99,9 @@ typedef enum esp_mqtt_event_id_t {
                                   - Additional context: msg_id (id of the deleted
                                 message, always 0 for QoS = 0 messages).
                                   */
+    MQTT_EVENT_STOPPED,         /*!< The client's task has fully
+                                stopped (transport closed, outbox drained) and
+                                is about to delete itself. */
     MQTT_USER_EVENT,            /*!< Custom event used to queue tasks into mqtt event handler
                                  All fields from the esp_mqtt_event_t type could be used to pass
                                  an additional context data to the handler.
@@ -511,6 +514,22 @@ esp_err_t esp_mqtt_client_disconnect(esp_mqtt_client_handle_t client);
  *         ESP_FAIL if client is in invalid state
  */
 esp_err_t esp_mqtt_client_stop(esp_mqtt_client_handle_t client);
+
+/**
+ * @brief Requests the client to stop without waiting for it to happen.
+ *        Unlike esp_mqtt_client_stop(), this never blocks. Following 
+ *        this events MQTT_EVENT_DELETED may occur if there are remaining 
+ *        outbox items and finally dispatch MQTT_EVENT_STOPPED
+ *
+ *        Fork-internal: added for mgos_mqtt's teardown path, not part of the
+ *        stable public contract.
+ *
+ * @param client    *MQTT* client handle
+ *
+ * @return ESP_OK on success
+ *         ESP_ERR_INVALID_ARG on wrong initialization
+ */
+esp_err_t esp_mqtt_client_initiate_stop(esp_mqtt_client_handle_t client);
 
 #ifdef __cplusplus
 
