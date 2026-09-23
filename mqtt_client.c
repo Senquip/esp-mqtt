@@ -2254,9 +2254,11 @@ esp_err_t esp_mqtt_client_start(esp_mqtt_client_handle_t client)
 #if MQTT_CORE_SELECTION_ENABLED
     ESP_LOGD(TAG, "Core selection enabled on %u", MQTT_TASK_CORE);
 
+    client->state = MQTT_STATE_WAIT_RECONNECT;
     if (xTaskCreatePinnedToCore(esp_mqtt_task, "mqtt_task", client->config->task_stack, client, client->config->task_prio,
                                 &client->task_handle, MQTT_TASK_CORE) != pdTRUE) {
         ESP_LOGE(TAG, "Error create mqtt task");
+        client->state = MQTT_STATE_DISCONNECTED;
         err = ESP_FAIL;
     }
 
