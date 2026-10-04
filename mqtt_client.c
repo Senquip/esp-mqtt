@@ -1248,6 +1248,21 @@ cleanup:
     return ret;
 }
 
+esp_err_t esp_mqtt_client_set_msg_id_fn(esp_mqtt_client_handle_t client,
+                                        esp_mqtt_msg_id_fn_t fn, void *ctx)
+{
+    if (!client) {
+        ESP_LOGE(TAG, "Client was not initialized");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    MQTT_API_LOCK(client);
+    client->mqtt_state.connection.msg_id_fn = fn;
+    client->mqtt_state.connection.msg_id_fn_ctx = ctx;
+    MQTT_API_UNLOCK(client);
+    return ESP_OK;
+}
+
 static esp_err_t esp_mqtt_dispatch_event_with_msgid(esp_mqtt_client_handle_t client)
 {
     if (client->mqtt_state.connection.information.protocol_ver == MQTT_PROTOCOL_V_5) {

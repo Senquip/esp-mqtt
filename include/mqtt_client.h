@@ -447,6 +447,22 @@ esp_err_t esp_mqtt_client_set_uri(esp_mqtt_client_handle_t client,
                                   const char *uri);
 
 /**
+ * @brief Type definition for custom message id generation function.
+ */
+typedef int (*esp_mqtt_msg_id_fn_t)(void *ctx);
+
+/**
+ * @brief Sets a function that supplies the id of each message that needs one.
+ * The caller ensures the ids are unique.
+ *
+ * @param client    *MQTT* client handle
+ * @param fn        Returns the message id, or 0 to fail the message. NULL restores the default ids.
+ * @param ctx       User context passed to fn.
+ */
+esp_err_t esp_mqtt_client_set_msg_id_fn(esp_mqtt_client_handle_t client,
+                                        esp_mqtt_msg_id_fn_t fn, void *ctx);
+
+/**
  * @brief Starts *MQTT* client with already created client handle
  *
  * @param client    *MQTT* client handle

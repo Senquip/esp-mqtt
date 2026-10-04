@@ -39,6 +39,14 @@ static uint16_t append_message_id(mqtt_connection_t *connection, uint16_t messag
 {
     // If message_id is zero then we should assign one, otherwise
     // we'll use the one supplied by the caller
+    if (message_id == 0 && connection->msg_id_fn != NULL) {
+        message_id = connection->msg_id_fn(connection->msg_id_fn_ctx);
+
+        if (message_id == 0) {
+            return 0;
+        }
+    }
+
     while (message_id == 0) {
 #if MQTT_MSG_ID_INCREMENTAL
         message_id = ++connection->last_message_id;
