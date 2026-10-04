@@ -21,6 +21,7 @@ typedef struct outbox_item {
     int msg_id;
     int msg_type;
     int msg_qos;
+    double transmitted; // Seconds since boot when last sent
     outbox_tick_t tick;
     pending_state_t pending;
     STAILQ_ENTRY(outbox_item) next;
@@ -171,6 +172,30 @@ esp_err_t outbox_set_tick(outbox_handle_t outbox, int msg_id, outbox_tick_t tick
 
     if (item) {
         item->tick = tick;
+        return ESP_OK;
+    }
+
+    return ESP_FAIL;
+}
+
+esp_err_t outbox_set_transmitted_time(outbox_handle_t outbox, int msg_id, double time)
+{
+    outbox_item_handle_t item = outbox_get(outbox, msg_id);
+
+    if (item) {
+        item->transmitted = time;
+        return ESP_OK;
+    }
+
+    return ESP_FAIL;
+}
+
+esp_err_t outbox_get_transmitted_time(outbox_handle_t outbox, int msg_id, double *time)
+{
+    outbox_item_handle_t item = outbox_get(outbox, msg_id);
+
+    if (item) {
+        *time = item->transmitted;
         return ESP_OK;
     }
 

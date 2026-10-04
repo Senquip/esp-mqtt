@@ -103,6 +103,7 @@ typedef enum esp_mqtt_event_id_t {
                                  - data_len  always 1
                                  The pointer remains valid for the duration of the event handler.
                                  */
+    MQTT_EVENT_PUBREC,          /*!< QoS 2 PUBREC received, additional context: msg_id, transmitted */
 } esp_mqtt_event_id_t;
 
 /**
@@ -243,6 +244,7 @@ typedef struct esp_mqtt_event_t {
                         as internal *MQTT* errors */
     bool retain; /*!< Retained flag of the message associated with this event */
     int qos;     /*!< QoS of the messages associated with this event */
+    double transmitted; /*!< PUBLISHED for QoS 1, and PUBREC: when the PUBLISH was last sent, in seconds since boot */
     bool dup;    /*!< dup flag of the message associated with this event */
     esp_mqtt_protocol_ver_t
     protocol_ver;   /*!< MQTT protocol version used for connection, defaults to value from menuconfig*/

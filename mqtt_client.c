@@ -1783,6 +1783,8 @@ static esp_err_t mqtt_process_receive(esp_mqtt_client_handle_t client)
         break;
 
     case MQTT_MSG_TYPE_PUBACK:
+        outbox_get_transmitted_time(client->outbox, msg_id, &client->event.transmitted);
+
         if (remove_initiator_message(client, MQTT_MSG_TYPE_PUBLISH, msg_id)) {
 #ifdef MQTT_PROTOCOL_5
 
@@ -1821,6 +1823,12 @@ static esp_err_t mqtt_process_receive(esp_mqtt_client_handle_t client)
 
         outbox_set_pending(client->outbox, msg_id, ACKNOWLEDGED);
         esp_mqtt_write(client);
+
+        if (outbox_get_transmitted_time(client->outbox, msg_id, &client->event.transmitted) == ESP_OK) {
+            client->event.event_id = MQTT_EVENT_PUBREC;
+            esp_mqtt_dispatch_event_with_msgid(client);
+        }
+
         break;
 
     case MQTT_MSG_TYPE_PUBREL:
@@ -1921,6 +1929,12 @@ static esp_err_t mqtt_resend_queued(esp_mqtt_client_handle_t client, outbox_item
         ESP_LOGE(TAG, "Error to resend data ");
         esp_mqtt_abort_connection(client);
         return ESP_FAIL;
+    }
+
+    // Ack times run from the last send
+    if (client->mqtt_state.pending_msg_type == MQTT_MSG_TYPE_PUBLISH && client->mqtt_state.pending_publish_qos > 0) {
+        outbox_set_transmitted_time(client->outbox, client->mqtt_state.pending_msg_id,
+                                    (double) platform_tick_get_ms() / 1000.0);
     }
 
     return ESP_OK;
