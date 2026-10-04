@@ -447,6 +447,18 @@ esp_err_t esp_mqtt_client_set_uri(esp_mqtt_client_handle_t client,
                                   const char *uri);
 
 /**
+ * @brief Replaces the username and password used by the next connect.
+ *
+ * @param client    *MQTT* client handle
+ * @param username  New username, or NULL to keep the current one
+ * @param password  New password, or NULL to keep the current one
+ *
+ * @return ESP_OK, ESP_ERR_INVALID_ARG, or ESP_ERR_NO_MEM
+ */
+esp_err_t esp_mqtt_client_update_credentials(esp_mqtt_client_handle_t client, const char *username,
+                                             const char *password);
+
+/**
  * @brief Type definition for custom message id generation function.
  */
 typedef int (*esp_mqtt_msg_id_fn_t)(void *ctx);

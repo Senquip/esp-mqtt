@@ -1248,6 +1248,26 @@ cleanup:
     return ret;
 }
 
+esp_err_t esp_mqtt_client_update_credentials(esp_mqtt_client_handle_t client, const char *username,
+                                             const char *password)
+{
+    if (!client) {
+        ESP_LOGE(TAG, "Client was not initialized");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    MQTT_API_LOCK(client);
+
+    if (!esp_mqtt_set_if_config(username, &client->mqtt_state.connection.information.username) ||
+            !esp_mqtt_set_if_config(password, &client->mqtt_state.connection.information.password)) {
+        MQTT_API_UNLOCK(client);
+        return ESP_ERR_NO_MEM;
+    }
+
+    MQTT_API_UNLOCK(client);
+    return ESP_OK;
+}
+
 esp_err_t esp_mqtt_client_set_msg_id_fn(esp_mqtt_client_handle_t client,
                                         esp_mqtt_msg_id_fn_t fn, void *ctx)
 {
