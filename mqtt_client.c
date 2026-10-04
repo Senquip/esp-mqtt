@@ -2016,7 +2016,7 @@ static void esp_mqtt_task(void *pv)
             if (!client->transport) {
                 if (esp_mqtt_client_create_transport(client) != ESP_OK) {
                     ESP_LOGE(TAG, "Failed to create transport list");
-                    client->run = false;
+                    esp_mqtt_abort_connection(client);
                     break;
                 }
 
@@ -2024,8 +2024,8 @@ static void esp_mqtt_task(void *pv)
                 client->transport = esp_transport_list_get_transport(client->transport_list, client->config->scheme);
 
                 if (client->transport == NULL) {
-                    ESP_LOGE(TAG, "There are no transports valid, stop mqtt client, config scheme = %s", client->config->scheme);
-                    client->run = false;
+                    ESP_LOGE(TAG, "There are no transports valid, config scheme = %s", client->config->scheme);
+                    esp_mqtt_abort_connection(client);
                     break;
                 }
             }
