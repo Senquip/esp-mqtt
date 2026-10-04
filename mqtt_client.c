@@ -474,7 +474,6 @@ esp_err_t esp_mqtt_set_config(esp_mqtt_client_handle_t client, const esp_mqtt_cl
         });
     }
 
-    mqtt_msg_buffer_destroy(&client->mqtt_state.connection);
     int buffer_size = config->buffer.size;
 
     if (buffer_size <= 0) {
@@ -484,14 +483,23 @@ esp_err_t esp_mqtt_set_config(esp_mqtt_client_handle_t client, const esp_mqtt_cl
     // use separate value for output buffer size if configured
     int out_buffer_size = config->buffer.out_size > 0 ? config->buffer.out_size : buffer_size;
 
-    if (mqtt_msg_buffer_init(&client->mqtt_state.connection, out_buffer_size) != ESP_OK) {
-        goto _mqtt_set_config_failed;
+    // Reapplied to a started client: keep buffers whose size is unchanged
+    if (client->mqtt_state.connection.buffer == NULL ||
+            client->mqtt_state.connection.buffer_length != (size_t)out_buffer_size) {
+        mqtt_msg_buffer_destroy(&client->mqtt_state.connection);
+
+        if (mqtt_msg_buffer_init(&client->mqtt_state.connection, out_buffer_size) != ESP_OK) {
+            goto _mqtt_set_config_failed;
+        }
     }
 
-    free(client->mqtt_state.in_buffer);
-    client->mqtt_state.in_buffer = (uint8_t *)heap_caps_malloc(buffer_size, MQTT_BUFFER_MEMORY);
-    ESP_MEM_CHECK(TAG, client->mqtt_state.in_buffer, goto _mqtt_set_config_failed);
-    client->mqtt_state.in_buffer_length = buffer_size;
+    if (client->mqtt_state.in_buffer == NULL || client->mqtt_state.in_buffer_length != buffer_size) {
+        free(client->mqtt_state.in_buffer);
+        client->mqtt_state.in_buffer = (uint8_t *)heap_caps_malloc(buffer_size, MQTT_BUFFER_MEMORY);
+        ESP_MEM_CHECK(TAG, client->mqtt_state.in_buffer, goto _mqtt_set_config_failed);
+        client->mqtt_state.in_buffer_length = buffer_size;
+    }
+
     client->config->message_retransmit_timeout = config->session.message_retransmit_timeout;
 
     if (config->session.message_retransmit_timeout <= 0) {
@@ -559,13 +567,8 @@ esp_err_t esp_mqtt_set_config(esp_mqtt_client_handle_t client, const esp_mqtt_cl
         client->mqtt_state.connection.information.will_length = strlen(config->session.last_will.msg);
     }
 
-    if (config->session.last_will.qos) {
-        client->mqtt_state.connection.information.will_qos = config->session.last_will.qos;
-    }
-
-    if (config->session.last_will.retain) {
-        client->mqtt_state.connection.information.will_retain = config->session.last_will.retain;
-    }
+    client->mqtt_state.connection.information.will_qos = config->session.last_will.qos;
+    client->mqtt_state.connection.information.will_retain = config->session.last_will.retain;
 
     if (config->session.disable_clean_session == client->mqtt_state.connection.information.clean_session) {
         client->mqtt_state.connection.information.clean_session = !config->session.disable_clean_session;
@@ -732,7 +735,12 @@ esp_err_t esp_mqtt_set_config(esp_mqtt_client_handle_t client, const esp_mqtt_cl
     MQTT_API_UNLOCK(client);
     return config_has_conflict;
 _mqtt_set_config_failed:
-    esp_mqtt_destroy_config(client);
+
+    // The task of a started client still uses the config
+    if (client->task_handle == NULL) {
+        esp_mqtt_destroy_config(client);
+    }
+
     MQTT_API_UNLOCK(client);
     return err;
 }
