@@ -34,6 +34,7 @@ ESP_EVENT_DEFINE_BASE(MQTT_EVENTS);
 const static int STOPPED_BIT = (1 << 0);
 const static int RECONNECT_BIT = (1 << 1);
 const static int DISCONNECT_BIT = (1 << 2);
+const static int POLL_BIT = (1 << 4);
 
 static esp_err_t esp_mqtt_dispatch_event(esp_mqtt_client_handle_t client);
 static esp_err_t esp_mqtt_dispatch_event_with_msgid(esp_mqtt_client_handle_t client);
@@ -1966,9 +1967,9 @@ static inline int max_poll_timeout(esp_mqtt_client_handle_t client, int max_time
 {
     return
 #if MQTT_EVENT_QUEUE_SIZE > 1
-        atomic_load(&client->queued_events) > 0 ? 10 : max_timeout;
+        (atomic_load(&client->queued_events) > 0 || (xEventGroupGetBits(client->status_bits) & POLL_BIT)) ? 10 : max_timeout;
 #else
-        max_timeout;
+        (xEventGroupGetBits(client->status_bits) & POLL_BIT) ? 10 : max_timeout;
 #endif
 }
 
@@ -1989,6 +1990,45 @@ static inline void run_event_loop(esp_mqtt_client_handle_t client)
     }
 }
 
+esp_err_t esp_mqtt_client_set_poll_cb(esp_mqtt_client_handle_t client, esp_mqtt_poll_cb_t cb, void *arg)
+{
+    if (!client) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    MQTT_API_LOCK(client);
+    client->poll_cb = cb;
+    client->poll_cb_arg = arg;
+    MQTT_API_UNLOCK(client);
+    return ESP_OK;
+}
+
+esp_err_t esp_mqtt_client_wake(esp_mqtt_client_handle_t client)
+{
+    if (!client) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    xEventGroupSetBits(client->status_bits, POLL_BIT);
+    return ESP_OK;
+}
+
+static void run_poll_cb(esp_mqtt_client_handle_t client)
+{
+    // Cleared first so a wake during the callback is not lost
+    xEventGroupClearBits(client->status_bits, POLL_BIT);
+
+    if (!client->poll_cb) {
+        return;
+    }
+
+    bool connecting = client->state == MQTT_STATE_INIT;
+
+    if (!client->poll_cb(client, connecting, client->poll_cb_arg) && connecting) {
+        esp_mqtt_abort_connection(client);
+    }
+}
+
 static void esp_mqtt_task(void *pv)
 {
     esp_mqtt_client_handle_t client = (esp_mqtt_client_handle_t) pv;
@@ -2001,6 +2041,7 @@ static void esp_mqtt_task(void *pv)
     while (client->run) {
         MQTT_API_LOCK(client);
         run_event_loop(client);
+        run_poll_cb(client);
         // delete long pending messages
         mqtt_delete_expired_messages(client);
         mqtt_client_state_t state = client->state;
@@ -2182,7 +2223,8 @@ static void esp_mqtt_task(void *pv)
             }
 
             MQTT_API_UNLOCK(client);
-            xEventGroupWaitBits(client->status_bits, RECONNECT_BIT, false, true,
+            // POLL_BIT wakes the task for the poll callback
+            xEventGroupWaitBits(client->status_bits, RECONNECT_BIT | POLL_BIT, false, false,
                                 max_poll_timeout(client, client->wait_timeout_ms / 2 / portTICK_PERIOD_MS));
             // continue the while loop instead of break, as the mutex is unlocked
             continue;
@@ -2344,6 +2386,8 @@ esp_err_t esp_mqtt_client_stop(esp_mqtt_client_handle_t client)
         client->run = false;
         client->state = MQTT_STATE_DISCONNECTED;
         MQTT_API_UNLOCK(client);
+        // Wake a task waiting in WAIT_RECONNECT
+        xEventGroupSetBits(client->status_bits, POLL_BIT);
         xEventGroupWaitBits(client->status_bits, STOPPED_BIT, false, true, portMAX_DELAY);
         return ESP_OK;
     } else {

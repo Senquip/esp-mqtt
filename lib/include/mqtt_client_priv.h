@@ -129,6 +129,8 @@ struct esp_mqtt_client {
     int wait_timeout_ms;
     int auto_reconnect;
     esp_mqtt_event_t event;
+    esp_mqtt_poll_cb_t poll_cb;
+    void *poll_cb_arg;
     bool run;
     bool wait_for_ping_resp;
     outbox_handle_t outbox;

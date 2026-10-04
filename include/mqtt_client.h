@@ -253,6 +253,9 @@ typedef struct esp_mqtt_event_t {
 
 } esp_mqtt_event_t;
 
+/** @brief MQTT task, loop top, API lock held. False while connecting fails the attempt. */
+typedef bool (*esp_mqtt_poll_cb_t)(esp_mqtt_client_handle_t client, bool connecting, void *arg);
+
 typedef esp_mqtt_event_t *esp_mqtt_event_handle_t;
 
 /**
@@ -715,6 +718,23 @@ int esp_mqtt_client_get_outbox_size(esp_mqtt_client_handle_t client);
  *         ESP_ERR_TIMEOUT if the event couldn't be queued (ref also CONFIG_MQTT_EVENT_QUEUE_SIZE)
  */
 esp_err_t esp_mqtt_dispatch_custom_event(esp_mqtt_client_handle_t client, esp_mqtt_event_t *event);
+
+/**
+ * @brief Sets the callback run at the top of each MQTT task loop iteration.
+ *        Call before esp_mqtt_client_start().
+ *
+ * @param client            *MQTT* client handle
+ * @param cb                callback, or NULL
+ * @param arg               argument passed to the callback
+ */
+esp_err_t esp_mqtt_client_set_poll_cb(esp_mqtt_client_handle_t client, esp_mqtt_poll_cb_t cb, void *arg);
+
+/**
+ * @brief Wakes the MQTT task so the poll callback runs soon. Never blocks; safe from any task.
+ *
+ * @param client            *MQTT* client handle
+ */
+esp_err_t esp_mqtt_client_wake(esp_mqtt_client_handle_t client);
 
 /**
  * @brief Get a transport from the scheme
