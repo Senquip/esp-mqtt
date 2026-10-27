@@ -112,3 +112,5 @@ build/
 # CI/CD artifacts (idf-dynamic-pipeline / idf-ci generated)
 build_child_pipeline.yml
 test_child_pipeline.yml
+
+.DS_Store
