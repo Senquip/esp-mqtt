@@ -461,6 +461,20 @@ esp_err_t esp_mqtt_client_update_credentials(esp_mqtt_client_handle_t client, co
                                              const char *password);
 
 /**
+ * @brief Replaces the CA, client certificate and key used by the next connect,
+ * without reapplying the rest of the config. Only the pointers are kept, as in
+ * esp_mqtt_set_config().
+ *
+ * @param client    *MQTT* client handle
+ * @param config    Supplies broker.verification.certificate and
+ *                  credentials.authentication.certificate and key, with their lengths
+ *
+ * @return ESP_OK or ESP_ERR_INVALID_ARG
+ */
+esp_err_t esp_mqtt_client_set_tls_certs(esp_mqtt_client_handle_t client,
+                                        const esp_mqtt_client_config_t *config);
+
+/**
  * @brief Type definition for custom message id generation function.
  */
 typedef int (*esp_mqtt_msg_id_fn_t)(void *ctx);

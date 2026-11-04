@@ -1268,6 +1268,25 @@ esp_err_t esp_mqtt_client_update_credentials(esp_mqtt_client_handle_t client, co
     return ESP_OK;
 }
 
+esp_err_t esp_mqtt_client_set_tls_certs(esp_mqtt_client_handle_t client,
+                                        const esp_mqtt_client_config_t *config)
+{
+    if (!client || !config) {
+        ESP_LOGE(TAG, "Client was not initialized");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    MQTT_API_LOCK(client);
+    client->config->cacert_buf = config->broker.verification.certificate;
+    client->config->cacert_bytes = config->broker.verification.certificate_len;
+    client->config->clientcert_buf = config->credentials.authentication.certificate;
+    client->config->clientcert_bytes = config->credentials.authentication.certificate_len;
+    client->config->clientkey_buf = config->credentials.authentication.key;
+    client->config->clientkey_bytes = config->credentials.authentication.key_len;
+    MQTT_API_UNLOCK(client);
+    return ESP_OK;
+}
+
 esp_err_t esp_mqtt_client_set_msg_id_fn(esp_mqtt_client_handle_t client,
                                         esp_mqtt_msg_id_fn_t fn, void *ctx)
 {
